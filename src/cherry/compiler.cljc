@@ -25,7 +25,6 @@
                                           #?(:cljs format)
                                           *aliases* *imported-vars* *public-vars* comma-list emit emit-args emit-infix
                                           emit-return escape-jsx infix-operator? prefix-unary?
-
                                           statement suffix-unary?]]
    [squint.defclass :as defclass])
   #?(:cljs (:require-macros [cherry.resource :as resource])))
@@ -104,8 +103,7 @@
                              'defclass defclass/defclass
                              'js-template defclass/js-template
                              'and squint-macros/core-and
-                             'or squint-macros/core-or
-                             }
+                             'or squint-macros/core-or}
                             cc/common-macros))
 
 (def core-config (resource/edn-resource "cherry/cljs.core.edn"))
@@ -340,12 +338,16 @@
 (defn transpile-string-internal [s compiler-opts]
   (let [rdr (e/reader s)
         opts cherry-parse-opts
-        opts (merge {:ns-state (atom {})}
-                    opts)]
-    (loop [transpiled (if cc/*repl*
-                        (let [ns (munge cc/*cljs-ns*)]
-                          (str "globalThis." ns " = globalThis." ns " || {};\n"))
-                        "")]
+        opts (merge {:ns-state (atom {}) 
+                     :auto-resolve @*aliases*}
+                   opts)
+        react-directive (:react-directive compiler-opts)]
+    (loop [transpiled (str (when react-directive
+                             (str "'" react-directive "'\n"))
+                           (if cc/*repl*
+                             (let [ns (munge cc/*cljs-ns*)]
+                               (str "globalThis." ns " = globalThis." ns " || {};\n"))
+                             ""))]
       (let [opts (assoc opts :auto-resolve @*aliases*)
             next-form (e/parse-next rdr opts)]
         (if (= ::e/eof next-form)
@@ -354,13 +356,26 @@
                 next-js (some-> next-t not-empty (statement))]
             (recur (str transpiled next-js))))))))
 
+(defn- extract-react-directive [form]
+  (when (and (seq? form)
+             (= 'ns (first form)))
+    (let [[_ _ & clauses] form
+          metadata (when (map? (first clauses))
+                    (first clauses))]
+      (some-> metadata :react-directive))))
+
 (defn compile-internal
   ([x f {:keys [elide-exports
                 elide-imports
-                core-alias]
+                core-alias
+                react-directive]
          :or {core-alias "cherry_core"}
          :as opts}]
-   (let [opts (merge {:ns-state (atom {})} opts)]
+   (let [opts (merge {:elide-exports elide-exports
+                      :elide-imports elide-imports
+                      :core-alias core-alias
+                      :react-directive react-directive}
+                     opts)]
      (binding [cc/*core-package* "cherry-cljs/cljs.core.js"
                *jsx* false
                cc/*repl* (:repl opts cc/*repl*)]
@@ -380,10 +395,16 @@
                    cc/*target* :squint
                    cc/*async* (:async opts)
                    cc/*cljs-ns* (:ns opts cc/*cljs-ns*)]
-           (let [transpiled (f x (assoc opts
-                                        :core-alias core-alias
-                                        :imports imports
-                                        :need-html-import need-html-import))
+           (let [s (if (string? x) x (str x))
+                 parsed-form (e/parse-next s (assoc cherry-parse-opts
+                                                  :ns-state (atom {})))
+                 opts (if-let [directive (extract-react-directive parsed-form)]
+                        (assoc opts :react-directive directive)
+                        opts)
+                 transpiled (f s (assoc opts
+                                      :core-alias core-alias
+                                      :imports imports
+                                      :need-html-import need-html-import))
                  _ (when @need-html-import
                      (swap! imports str
                             (if cc/*repl*

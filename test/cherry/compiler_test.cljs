@@ -184,7 +184,7 @@
 (deftest if-test
   (is (true? (jsv! "(if 0 true false)")))
   (let [s (jss! "[(if false true false)]")]
-    (false? (first (js/eval s))))
+    (is (false? (first (js/eval s)))))
   (let [s (jss! "(let [x (if (inc 1) (inc 2) (inc 3))]
                    x)")]
     (is (= 3 (js/eval s))))
@@ -271,7 +271,7 @@
 (deftest defprotocol-extend-type-string-test
   (is (= :foo (jsv! '(do (defprotocol IFoo (foo [_] "docstring"))
                          (extend-type string IFoo (foo [_] :foo))
-                          (foo "bar"))))))
+                         (foo "bar"))))))
 
 (deftest deftype-test
   (is (= 1 (jsv! '(do (deftype Foo [x]) (.-x (->Foo 1))))))
@@ -496,6 +496,71 @@ IReset (-reset! [this v]
 (swap! x (fn [old-val v] (+ old-val v)) 5)
 
 (deref x)"))))
+
+(deftest react-directive-test
+  (testing "React directive in namespace metadata"
+    (let [code "(ns app.page
+                  {:react-directive \"use client\"}
+                  (:require [squint.core :refer [jsx]]))
+
+                (defn Page []
+                  #jsx [:h1 {} \"Hello, ClojureScript\"])
+
+                (def default Page)"
+          compiled (cherry/compile-string code)]
+      (is (str/includes? compiled "'use client'"))
+      (is (str/includes? compiled "import * as cherry_core from 'cherry-cljs/cljs.core.js'"))
+      (is (str/includes? compiled "var Page = (function () {"))
+      (is (str/includes? compiled "return <h1>Hello, ClojureScript</h1>"))
+      (is (str/includes? compiled "export default default$"))))
+
+  (testing "No React directive in namespace metadata"
+    (let [code "(ns app.page
+                  (:require [squint.core :refer [jsx]]))
+
+                (defn Page []
+                  #jsx [:h1 {} \"Hello, ClojureScript\"])
+
+                (def default Page)"
+          compiled (cherry/compile-string code)]
+      (is (not (str/includes? compiled "'use client'")))
+      (is (str/includes? compiled "import * as cherry_core from 'cherry-cljs/cljs.core.js'"))
+      (is (str/includes? compiled "var Page = (function () {"))
+      (is (str/includes? compiled "return <h1>Hello, ClojureScript</h1>"))
+      (is (str/includes? compiled "export default default$"))))
+
+  (testing "React directive with different value"
+    (let [code "(ns app.page
+                  {:react-directive \"use server\"}
+                  (:require [squint.core :refer [jsx]]))
+
+                (defn Page []
+                  #jsx [:h1 {} \"Hello, ClojureScript\"])
+
+                (def default Page)"
+          compiled (cherry/compile-string code)]
+      (is (str/includes? compiled "'use server'"))
+      (is (str/includes? compiled "import * as cherry_core from 'cherry-cljs/cljs.core.js'"))
+      (is (str/includes? compiled "var Page = (function () {"))
+      (is (str/includes? compiled "return <h1>Hello, ClojureScript</h1>"))
+      (is (str/includes? compiled "export default default$")))))
+
+(deftest ns-with-docstring-and-react-directive-test
+  (let [code "(ns app.page
+              \"docstring\"
+              {:react-directive \"use client\"}
+              (:require [squint.core :refer [jsx]]))
+
+              (defn Page []
+                #jsx [:h1 {} \"Hello, ClojureScript\"])
+
+              (def default Page)"
+        compiled (cherry/compile-string code)]
+    (is (str/includes? compiled "'use client'"))
+    (is (str/includes? compiled "import * as cherry_core from 'cherry-cljs/cljs.core.js'"))
+    (is (str/includes? compiled "var Page = (function () {"))
+    (is (str/includes? compiled "return <h1>Hello, ClojureScript</h1>"))
+    (is (str/includes? compiled "export default default$"))))
 
 (defn init []
   (cljs.test/run-tests 'cherry.compiler-test 'cherry.jsx-test 'cherry.squint-and-cherry-test
